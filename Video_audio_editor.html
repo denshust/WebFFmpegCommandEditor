@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pro Web FFmpeg Редактор</title>
+    <style>
+        :root { --bg: #1e1e1e; --panel: #2d2d2d; --text: #eaeaea; --accent: #007acc; --accent-hover: #005f9e; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: var(--bg); color: var(--text); margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        h1 { margin-top: 0; text-align: center; }
+        .container { width: 100%; max-width: 1100px; display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+        .player-section, .controls-section { background: var(--panel); padding: 20px; border-radius: 8px; flex: 1; min-width: 350px; }
+        video { width: 100%; border-radius: 8px; background: #000; aspect-ratio: 16/9; }
+        .track { background: #3d3d3d; padding: 15px; margin-bottom: 15px; border-radius: 6px; display: flex; flex-direction: column; gap: 10px; border-left: 4px solid #555; }
+        .track.video-track { border-left-color: #007acc; }
+        .track.audio-track { border-left-color: #28a745; }
+        .track-header { display: flex; justify-content: space-between; font-weight: bold; font-size: 1.1em; border-bottom: 1px solid #555; padding-bottom: 5px; }
+        .meta-info { font-size: 0.85em; color: #aaa; margin-top: -5px; }
+        .controls-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: center; }
+        .control-item { display: flex; flex-direction: column; gap: 4px; }
+        input[type="range"] { width: 100%; accent-color: var(--accent); }
+        input[type="text"] { background: #222; color: #4af626; border: 1px solid #555; padding: 6px; border-radius: 4px; font-family: monospace; font-size: 14px; width: 80px; text-align: center; }
+        input[type="file"] { margin-bottom: 5px; font-size: 0.9em; }
+        button { background: var(--accent); color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; transition: 0.2s; font-weight: bold; }
+        button:hover { background: var(--accent-hover); }
+        .btn-danger { background: #d32f2f; }
+        .btn-danger:hover { background: #b71c1c; }
+        .ffmpeg-box { background: #111; padding: 15px; border-radius: 6px; font-family: monospace; color: #4af626; word-break: break-all; border: 1px solid #444; font-size: 14px; }
+        .play-btn { width: 100%; padding: 15px; font-size: 18px; margin-top: 10px; background: #28a745; }
+        .play-btn:hover { background: #218838; }
+    </style>
+</head>
+<body>
+
+    <h1>🎬 Pro Web FFmpeg Редактор</h1>
+    
+    <div class="container">
+        <div class="player-section" style="position: sticky; top: 20px;">
+            <h3>Попередній перегляд</h3>
+            <video id="mainVideo" controls></video>
+            <button id="globalPlay" class="play-btn">▶ Відтворити мікс (Preview)</button>
+            <p style="font-size: 12px; color: #888; text-align: center; margin-top: 10px;">
+                *Попередній перегляд може мати мікро-затримки через браузер. Команда FFmpeg зклеїть усе ідеально.
+            </p>
+        </div>
+
+        <div class="controls-section">
+            <h3>Файли та Таймлайн</h3>
+            
+            <div class="track video-track" id="videoTrackPanel">
+                <div class="track-header">📹 Головне відео</div>
+                <input type="file" id="videoInput" accept="video/*">
+                <div class="meta-info">Тривалість: <span id="videoDurationLabel">--:--</span></div>
+                
+                <div class="controls-grid" style="grid-template-columns: 1fr; margin-top: 5px;">
+                    <div class="control-item">
+                        <label>🔊 Гучність оригіналу: <span id="videoVolLabel">1.00</span></label>
+                        <input type="range" id="videoVol" min="0" max="2" step="0.01" value="1.00">
+                    </div>
+                </div>
+
+                <div class="controls-grid" style="margin-top: 10px; padding-top: 10px; border-top: 1px dashed #555;">
+                    <div class="control-item">
+                        <label>✂ Обрізати З (mm:ss):</label>
+                        <input type="text" id="videoTrimStart" value="00:00" placeholder="00:00">
+                    </div>
+                    <div class="control-item">
+                        <label>✂ Обрізати ДО (mm:ss):</label>
+                        <input type="text" id="videoTrimEnd" placeholder="До кінця">
+                    </div>
+                </div>
+            </div>
+
+            <div id="audioTracksContainer"></div>
+
+            <button id="addAudioBtn" style="width: 100%; margin-top: 10px; padding: 12px; font-size: 16px;">
+                + Додати аудіо доріжку
+            </button>
+        </div>
+    </div>
+
+    <div class="container" style="margin-top: 20px;">
+        <div class="controls-section" style="width: 100%;">
+            <h3>🚀 Ваша команда FFmpeg</h3>
+            <div class="ffmpeg-box" id="ffmpegCommand">Оберіть відео та додайте аудіо...</div>
+        </div>
+    </div>
+
+    <script>
+        // --- Допоміжні функції часу ---
+        function parseTimeToSeconds(timeStr) {
+            if (!timeStr || timeStr.trim() === "") return null;
+            const parts = timeStr.split(':');
+            if (parts.length === 2) {
+                return (parseInt(parts[0]) || 0) * 60 + (parseFloat(parts[1]) || 0);
+            } else if (parts.length === 3) {
+                return (parseInt(parts[0]) || 0) * 3600 + (parseInt(parts[1]) || 0) * 60 + (parseFloat(parts[2]) || 0);
+            }
+            return parseFloat(timeStr) || null;
+        }
+
+        function formatSecondsToTime(sec) {
+            if (isNaN(sec) || sec < 0) return "00:00";
+            const m = Math.floor(sec / 60);
+            const s = Math.floor(sec % 60);
+            return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+        }
+
+        // --- Основні змінні ---
+        const videoInput = document.getElementById('videoInput');
+        const mainVideo = document.getElementById('mainVideo');
+        const videoVol = document.getElementById('videoVol');
+        const videoVolLabel = document.getElementById('videoVolLabel');
+        const videoDurationLabel = document.getElementById('videoDurationLabel');
+        const videoTrimStart = document.getElementById('videoTrimStart');
+        const videoTrimEnd = document.getElementById('videoTrimEnd');
+        const audioTracksContainer = document.getElementById('audioTracksContainer');
+        const addAudioBtn = document.getElementById('addAudioBtn');
+        const ffmpegCommandBox = document.getElementById('ffmpegCommand');
+        const globalPlayBtn = document.getElementById('globalPlay');
+
+        let videoFileName = 'video.mp4';
+        let audioTracks = [];
+        let trackCounter = 0;
+
+        // --- Обробка відео ---
+        videoInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                videoFileName = file.name;
+                mainVideo.src = URL.createObjectURL(file);
+            }
+        });
+
+        mainVideo.addEventListener('loadedmetadata', () => {
+            videoDurationLabel.textContent = formatSecondsToTime(mainVideo.duration);
+            updateFFmpegCommand();
+        });
+
+        videoVol.addEventListener('input', (e) => {
+            mainVideo.volume = Math.min(1, Math.max(0, e.target.value));
+            videoVolLabel.textContent = parseFloat(e.target.value).toFixed(2);
+            updateFFmpegCommand();
+        });
+
+        videoTrimStart.addEventListener('input', updateFFmpegCommand);
+        videoTrimEnd.addEventListener('input', updateFFmpegCommand);
+
+        // --- Обробка аудіо ---
+        addAudioBtn.addEventListener('click', () => {
+            trackCounter++;
+            const tId = trackCounter;
+            
+            const trackDiv = document.createElement('div');
+            trackDiv.className = 'track audio-track';
+            trackDiv.innerHTML = `
+                <div class="track-header">
+                    🎵 Аудіо ${tId} 
+                    <button class="btn-danger btn-sm" onclick="removeTrack(${tId})">✖</button>
+                </div>
+                <input type="file" id="audioFile_${tId}" accept="audio/*">
+                <div class="meta-info">Тривалість: <span id="audioDuration_${tId}">--:--</span></div>
+                
+                <div class="controls-grid">
+                    <div class="control-item">
+                        <label>⏱ Старт (mm:ss):</label>
+                        <input type="text" id="audioStart_${tId}" value="00:00" placeholder="00:00">
+                    </div>
+                    <div class="control-item">
+                        <label>🔊 Гучність: <span id="audioVolLabel_${tId}">1.00</span></label>
+                        <input type="range" id="audioVol_${tId}" min="0" max="2" step="0.01" value="1.00">
+                    </div>
+                </div>
+            `;
+            audioTracksContainer.appendChild(trackDiv);
+
+            const trackData = {
+                id: tId,
+                div: trackDiv,
+                fileInput: document.getElementById(`audioFile_${tId}`),
+                startTimeInput: document.getElementById(`audioStart_${tId}`),
+                volumeInput: document.getElementById(`audioVol_${tId}`),
+                volumeLabel: document.getElementById(`audioVolLabel_${tId}`),
+                durationLabel: document.getElementById(`audioDuration_${tId}`),
+                fileName: `audio_${tId}.mp3`,
+                audioElement: new Audio()
+            };
+
+            trackData.fileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    trackData.fileName = file.name;
+                    trackData.audioElement.src = URL.createObjectURL(file);
+                }
+            });
+
+            trackData.audioElement.addEventListener('loadedmetadata', () => {
+                trackData.durationLabel.textContent = formatSecondsToTime(trackData.audioElement.duration);
+                updateFFmpegCommand();
+            });
+
+            trackData.startTimeInput.addEventListener('input', updateFFmpegCommand);
+            trackData.volumeInput.addEventListener('input', (e) => {
+                let vol = parseFloat(e.target.value);
+                trackData.volumeLabel.textContent = vol.toFixed(2);
+                trackData.audioElement.volume = Math.min(1, Math.max(0, vol));
+                updateFFmpegCommand();
+            });
+
+            audioTracks.push(trackData);
+            updateFFmpegCommand();
+        });
+
+        window.removeTrack = (id) => {
+            const index = audioTracks.findIndex(t => t.id === id);
+            if (index > -1) {
+                audioTracks[index].audioElement.pause();
+                audioTracks[index].div.remove();
+                audioTracks.splice(index, 1);
+                updateFFmpegCommand();
+            }
+        };
+
+        // --- Магія створення команди ---
+        function updateFFmpegCommand() {
+            if (!videoInput.files.length) {
+                ffmpegCommandBox.textContent = "Спочатку завантажте відео.";
+                return;
+            }
+
+            let cmd = `ffmpeg`;
+            
+            // 1. Обрізка відео (вхідні параметри)
+            let vStart = parseTimeToSeconds(videoTrimStart.value);
+            let vEnd = parseTimeToSeconds(videoTrimEnd.value);
+            
+            if (vStart && vStart > 0) cmd += ` -ss ${vStart}`;
+            if (vEnd && vEnd > 0) cmd += ` -to ${vEnd}`;
+            
+            cmd += ` -i "${videoFileName}"`;
+
+            // 2. Аудіо входи
+            let validAudios = audioTracks.filter(t => t.fileInput.files.length > 0);
+            validAudios.forEach(t => {
+                cmd += ` -i "${t.fileName}"`;
+            });
+
+            // 3. Фільтри (змішування)
+            let filterComplex = "";
+            let videoVolVal = parseFloat(videoVol.value).toFixed(2);
+
+            if (validAudios.length > 0) {
+                cmd += ` -filter_complex "`;
+                let mixInputs = `[0:a]volume=${videoVolVal}[a0]; `;
+                let amixStr = `[a0]`;
+
+                validAudios.forEach((t, index) => {
+                    let startSec = parseTimeToSeconds(t.startTimeInput.value) || 0;
+                    let msDelay = Math.floor(startSec * 1000);
+                    let vol = parseFloat(t.volumeInput.value).toFixed(2);
+                    let trackIdx = index + 1;
+                    
+                    mixInputs += `[${trackIdx}:a]adelay=${msDelay}|${msDelay},volume=${vol}[a${trackIdx}]; `;
+                    amixStr += `[a${trackIdx}]`;
+                });
+
+                filterComplex += `${mixInputs}${amixStr}amix=inputs=${validAudios.length + 1}:duration=first[a_out]" -map 0:v -map "[a_out]"`;
+            } else {
+                filterComplex += `-filter:a "volume=${videoVolVal}"`;
+            }
+
+            cmd += ` ${filterComplex} -c:v copy -c:a aac output.mp4`;
+            ffmpegCommandBox.textContent = cmd;
+        }
+
+        // --- Синхронізація Плеєра ---
+        globalPlayBtn.addEventListener('click', () => {
+            let vStart = parseTimeToSeconds(videoTrimStart.value) || 0;
+            
+            if (mainVideo.paused) {
+                if (mainVideo.currentTime < vStart) {
+                    mainVideo.currentTime = vStart;
+                }
+                mainVideo.play();
+                globalPlayBtn.textContent = "⏸ Пауза";
+                globalPlayBtn.style.background = "#d32f2f";
+            } else {
+                mainVideo.pause();
+                globalPlayBtn.textContent = "▶ Відтворити мікс (Preview)";
+                globalPlayBtn.style.background = "#28a745";
+                audioTracks.forEach(t => t.audioElement.pause());
+            }
+        });
+
+        mainVideo.addEventListener('timeupdate', () => {
+            if (mainVideo.paused) return;
+
+            let vStart = parseTimeToSeconds(videoTrimStart.value) || 0;
+            let vEnd = parseTimeToSeconds(videoTrimEnd.value) || mainVideo.duration;
+
+            // Зупинка, якщо дійшли до кінця обрізки
+            if (mainVideo.currentTime >= vEnd) {
+                mainVideo.pause();
+                globalPlayBtn.textContent = "▶ Відтворити мікс (Preview)";
+                globalPlayBtn.style.background = "#28a745";
+                audioTracks.forEach(t => t.audioElement.pause());
+                return;
+            }
+
+            // "Віртуальний час" готового відео (від 0)
+            const outputTime = mainVideo.currentTime - vStart;
+
+            audioTracks.forEach(t => {
+                if (t.fileInput.files.length > 0) {
+                    const startT = parseTimeToSeconds(t.startTimeInput.value) || 0;
+                    const isTime = outputTime >= startT;
+                    
+                    if (isTime && t.audioElement.paused) {
+                        t.audioElement.currentTime = outputTime - startT;
+                        t.audioElement.play();
+                    } else if (!isTime && !t.audioElement.paused) {
+                        t.audioElement.pause();
+                    }
+                }
+            });
+        });
+        
+        mainVideo.addEventListener('seeked', () => {
+            let vStart = parseTimeToSeconds(videoTrimStart.value) || 0;
+            const outputTime = mainVideo.currentTime - vStart;
+            
+            audioTracks.forEach(t => {
+                 const startT = parseTimeToSeconds(t.startTimeInput.value) || 0;
+                 if(outputTime >= startT) {
+                     t.audioElement.currentTime = outputTime - startT;
+                 } else {
+                     t.audioElement.currentTime = 0;
+                 }
+            });
+        });
+    </script>
+</body>
+</html>
